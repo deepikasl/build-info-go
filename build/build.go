@@ -93,7 +93,7 @@ func (b *Build) AddYarnModule(srcPath string) (*YarnModule, error) {
 
 func (b *Build) CollectEnv() error {
 	if !b.buildNameAndNumberProvided() {
-		return errors.New("a build name must be provided in order to collect environment variables")
+		return errors.New("build name and build number must be provided in order to collect environment variables")
 	}
 	envMap := make(map[string]string)
 	for _, e := range os.Environ() {
@@ -123,7 +123,7 @@ func (b *Build) Clean() error {
 
 func (b *Build) ToBuildInfo() (*entities.BuildInfo, error) {
 	if !b.buildNameAndNumberProvided() {
-		return nil, errors.New("a build name must be provided in order to generate build-info")
+		return nil, errors.New("build name and build number must be provided in order to generate build-info")
 	}
 	buildInfo, err := b.createBuildInfoFromPartials()
 	if err != nil {

@@ -55,7 +55,7 @@ func newNpmModule(srcPath string, containingBuild *Build) (*NpmModule, error) {
 
 func (nm *NpmModule) CalcDependencies() error {
 	if !nm.containingBuild.buildNameAndNumberProvided() {
-		return errors.New("a build name must be provided in order to collect the project's dependencies")
+		return errors.New("build name and build number must be provided in order to collect the project's dependencies")
 	}
 	buildInfoDependencies, err := buildutils.CalculateDependenciesList(nm.typeRestriction, nm.executablePath, nm.srcPath, nm.name, nm.npmArgs, nm.traverseDependenciesFunc, nm.threads, nm.containingBuild.logger)
 	if err != nil {
@@ -92,7 +92,7 @@ func (nm *NpmModule) SetTraverseDependenciesFunc(traverseDependenciesFunc func(d
 
 func (nm *NpmModule) AddArtifacts(artifacts ...entities.Artifact) error {
 	if !nm.containingBuild.buildNameAndNumberProvided() {
-		return errors.New("a build name must be provided in order to add artifacts")
+		return errors.New("build name and build number must be provided in order to add artifacts")
 	}
 	partial := &entities.Partial{ModuleId: nm.name, ModuleType: entities.Npm, Artifacts: artifacts}
 	return nm.containingBuild.SavePartialBuildInfo(partial)

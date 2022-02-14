@@ -3,6 +3,7 @@ package build
 import (
 	"errors"
 	"fmt"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"unicode"
@@ -14,7 +15,9 @@ import (
 type GoModule struct {
 	containingBuild *Build
 	name            string
+	goModName       string
 	srcPath         string
+	goArgs          []string
 }
 
 func newGoModule(srcPath string, containingBuild *Build) (*GoModule, error) {
@@ -32,56 +35,122 @@ func newGoModule(srcPath string, containingBuild *Build) (*GoModule, error) {
 		return nil, err
 	}
 
-	return &GoModule{name: name, srcPath: srcPath, containingBuild: containingBuild}, nil
+	return &GoModule{name: name, goModName: name, srcPath: srcPath, containingBuild: containingBuild}, nil
 }
 
-func (gm *GoModule) CalcDependencies() error {
-	if !gm.containingBuild.buildNameAndNumberProvided() {
-		return errors.New("a build name must be provided in order to collect the project's dependencies")
+// Build builds the project, collects its dependencies and saves them in the build-info module.
+func (gm *GoModule) Build() (err error) {
+	isGoGetCommand := false
+	if len(gm.goArgs) > 0 {
+		err = utils.RunGo(gm.goArgs)
+		if err != nil {
+			if _, ok := err.(*exec.ExitError); ok {
+				err = errors.New(err.Error())
+			}
+			return
+		}
+		isGoGetCommand = gm.goArgs[0] == "get"
 	}
-	buildInfoDependencies, err := gm.loadDependencies()
-	if err != nil {
-		return err
+	if !gm.containingBuild.buildNameAndNumberProvided() {
+		return
 	}
 
-	buildInfoModule := entities.Module{Id: gm.name, Type: entities.Go, Dependencies: buildInfoDependencies}
+	srcPath := gm.srcPath
+	biModuleName := gm.name
+	if isGoGetCommand {
+		if len(gm.goArgs) < 2 {
+			// Package name was not supplied. Invalid go get commend
+			return errors.New("package name is missing")
+		}
+		var tempDirPath string
+		tempDirPath, err = utils.CreateTempDir()
+		if err != nil {
+			return
+		}
+		// Cleanup the temp working directory at the end.
+		defer func() {
+			e := utils.RemoveTempDir(tempDirPath)
+			if err == nil {
+				err = e
+			}
+		}()
+		biModuleName, err = gm.handleGoGetCmd(tempDirPath)
+		if err != nil {
+			return
+		}
+		srcPath = tempDirPath
+	}
+	buildInfoDependencies, err := gm.loadDependencies(srcPath, biModuleName)
+	if err != nil {
+		return
+	}
+
+	buildInfoModule := entities.Module{Id: biModuleName, Type: entities.Go, Dependencies: buildInfoDependencies}
 	buildInfo := &entities.BuildInfo{Modules: []entities.Module{buildInfoModule}}
 
 	return gm.containingBuild.SaveBuildInfo(buildInfo)
+}
+
+// handleGoGetCmd copies the requested package files from the cache to the given destPath and returns the package's module path (the package's name).
+func (gm *GoModule) handleGoGetCmd(destPath string) (string, error) {
+	var packageName string
+	for argIndex := 1; argIndex < len(gm.goArgs); argIndex++ {
+		if !strings.HasPrefix(gm.goArgs[argIndex], "-") {
+			packageName = gm.goArgs[argIndex]
+			break
+		}
+	}
+	if packageName == "" {
+		return "", errors.New("package name is missing")
+	}
+	modulePath, packageFilesPath, err := utils.GetPackagePathAndDir(gm.srcPath, packageName, gm.containingBuild.logger)
+	if err != nil {
+		return "", err
+	}
+	// Copy the entire content of the relevant Go pkg directory to the requested destination path.
+	err = utils.CopyDir(packageFilesPath, destPath, true, nil)
+	if err != nil {
+		return "", fmt.Errorf("Couldn't find suitable package files: %s", packageFilesPath)
+	}
+	return modulePath, nil
 }
 
 func (gm *GoModule) SetName(name string) {
 	gm.name = name
 }
 
+func (gm *GoModule) SetArgs(goArgs []string) {
+	gm.goArgs = goArgs
+}
+
 func (gm *GoModule) AddArtifacts(artifacts ...entities.Artifact) error {
 	if !gm.containingBuild.buildNameAndNumberProvided() {
-		return errors.New("a build name must be provided in order to add artifacts")
+		return errors.New("build name and build number must be provided in order to add artifacts")
 	}
 	partial := &entities.Partial{ModuleId: gm.name, ModuleType: entities.Go, Artifacts: artifacts}
 	return gm.containingBuild.SavePartialBuildInfo(partial)
 }
 
-func (gm *GoModule) loadDependencies() ([]entities.Dependency, error) {
+func (gm *GoModule) loadDependencies(srcPath, parentId string) ([]entities.Dependency, error) {
 	cachePath, err := utils.GetCachePath()
 	if err != nil {
 		return nil, err
 	}
-	dependenciesGraph, err := utils.GetDependenciesGraph(gm.srcPath, gm.containingBuild.logger)
+	dependenciesGraph, err := utils.GetDependenciesGraph(srcPath, gm.containingBuild.logger)
 	if err != nil {
 		return nil, err
 	}
-	dependenciesMap, err := gm.getGoDependencies(cachePath)
+	dependenciesMap, err := gm.getGoDependencies(cachePath, srcPath)
 	if err != nil {
 		return nil, err
 	}
 	emptyRequestedBy := [][]string{{}}
-	populateRequestedByField(gm.name, emptyRequestedBy, dependenciesMap, dependenciesGraph)
+	populateRequestedByField(parentId, emptyRequestedBy, dependenciesMap, dependenciesGraph)
 	return dependenciesMapToList(dependenciesMap), nil
 }
 
-func (gm *GoModule) getGoDependencies(cachePath string) (map[string]entities.Dependency, error) {
-	modulesMap, err := utils.GetDependenciesList(gm.srcPath, gm.containingBuild.logger)
+func (gm *GoModule) getGoDependencies(cachePath, srcPath string) (map[string]entities.Dependency, error) {
+	modulesMap, err := utils.GetDependenciesList(srcPath, gm.containingBuild.logger)
 	if err != nil || len(modulesMap) == 0 {
 		return nil, err
 	}

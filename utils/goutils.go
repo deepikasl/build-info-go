@@ -1,6 +1,7 @@
 package utils
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -74,12 +75,7 @@ func (config *Cmd) GetErrWriter() io.WriteCloser {
 	return config.ErrWriter
 }
 
-func RunGo(goArg []string, repoUrl string) error {
-	err := os.Setenv("GOPROXY", repoUrl)
-	if err != nil {
-		return err
-	}
-
+func RunGo(goArg []string) error {
 	goCmd, err := newCmd()
 	if err != nil {
 		return err
@@ -113,12 +109,57 @@ func GetModuleNameByDir(projectDir string, log Log) (string, error) {
 		return "", err
 	}
 	cmdArgs = append(cmdArgs, "-m")
-	output, err := runDependenciesCmd(projectDir, cmdArgs, log)
+	output, err := runDependenciesCmd(projectDir, cmdArgs, true, log)
 	if err != nil {
 		return "", err
 	}
 	lineOutput := strings.Split(output, "\n")
 	return lineOutput[0], err
+}
+
+// GetPackagePathAndDir gets a Go project and a package id (of the project itself or one of its dependencies) and returns its module path and the path in the cache.
+func GetPackagePathAndDir(projectDir, packageId string, log Log) (modulePath, packageDir string, err error) {
+	if log == nil {
+		log = &NullLog{}
+	}
+
+	packageIdParts := strings.SplitN(packageId, "@", 2)
+	packageName := packageIdParts[0]
+	packageIdSuffix := ""
+	if len(packageIdParts) == 2 {
+		packageIdSuffix = "@" + packageIdParts[1]
+	}
+	cmdArgs, err := getListCmdArgs()
+	if err != nil {
+		return
+	}
+	cmdArgs = append(cmdArgs, "-m", "-json")
+	var output string
+	for true {
+		currArgs := append(cmdArgs, packageName+packageIdSuffix)
+		output, err = runDependenciesCmd(projectDir, currArgs, false, log)
+		if err == nil {
+			break
+		}
+		lastSlashIndex := strings.LastIndex(packageName, "/")
+		if lastSlashIndex == -1 {
+			err = errors.New(fmt.Sprintf("the package %s couldn't be found in cache", packageId))
+			return
+		}
+		packageName = packageName[:lastSlashIndex]
+	}
+
+	goPack := new(goPackage)
+	err = json.Unmarshal([]byte(output), &goPack)
+	if err != nil {
+		return
+	}
+	return goPack.Path, goPack.Dir, err
+}
+
+type goPackage struct {
+	Path string `json:"Path,omitempty"`
+	Dir  string `json:"Dir,omitempty"`
 }
 
 // Gets go list command args according to go version
@@ -140,11 +181,11 @@ func GetDependenciesList(projectDir string, log Log) (map[string]bool, error) {
 	if err != nil {
 		return nil, err
 	}
-	output, err := runDependenciesCmd(projectDir, append(cmdArgs, "-f", "{{with .Module}}{{.Path}}:{{.Version}}{{end}}", "all"), log)
+	output, err := runDependenciesCmd(projectDir, append(cmdArgs, "-f", "{{with .Module}}{{.Path}}:{{.Version}}{{end}}", "all"), true, log)
 	if err != nil {
 		// Errors occurred while running "go list". Run again and this time ignore errors (with '-e')
 		log.Warn("Errors occurred while building the Go dependency tree. The dependency tree may be incomplete:" + err.Error())
-		output, err = runDependenciesCmd(projectDir, append(cmdArgs, "-e", "-f", "{{with .Module}}{{.Path}}:{{.Version}}{{end}}", "all"), log)
+		output, err = runDependenciesCmd(projectDir, append(cmdArgs, "-e", "-f", "{{with .Module}}{{.Path}}:{{.Version}}{{end}}", "all"), true, log)
 		if err != nil {
 			return nil, err
 		}
@@ -154,15 +195,16 @@ func GetDependenciesList(projectDir string, log Log) (map[string]bool, error) {
 
 // Runs 'go mod graph' command and returns map that maps dependencies to their child dependencies slice
 func GetDependenciesGraph(projectDir string, log Log) (map[string][]string, error) {
-	output, err := runDependenciesCmd(projectDir, []string{"mod", "graph"}, log)
+	output, err := runDependenciesCmd(projectDir, []string{"mod", "graph"}, true, log)
 	if err != nil {
 		return nil, err
 	}
 	return graphToMap(output), err
 }
 
-// Common function to run dependencies command for list or graph commands
-func runDependenciesCmd(projectDir string, commandArgs []string, log Log) (output string, err error) {
+// Common function to run dependencies command for list or graph commands.
+// Set prompt = true to print the command's output to stderr.
+func runDependenciesCmd(projectDir string, commandArgs []string, prompt bool, log Log) (output string, err error) {
 	log.Info(fmt.Sprintf("Running 'go %s' in %s", strings.Join(commandArgs, " "), projectDir))
 	if projectDir == "" {
 		projectDir, err = GetProjectRoot()
@@ -206,9 +248,9 @@ func runDependenciesCmd(projectDir string, commandArgs []string, log Log) (outpu
 	}
 	var executionError error
 	if performPasswordMask {
-		output, _, _, executionError = gofrogcmd.RunCmdWithOutputParser(goCmd, true, protocolRegExp)
+		output, _, _, executionError = gofrogcmd.RunCmdWithOutputParser(goCmd, prompt, protocolRegExp)
 	} else {
-		output, _, _, executionError = gofrogcmd.RunCmdWithOutputParser(goCmd, true)
+		output, _, _, executionError = gofrogcmd.RunCmdWithOutputParser(goCmd, prompt)
 	}
 	if len(output) != 0 {
 		log.Debug(output)

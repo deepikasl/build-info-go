@@ -50,11 +50,16 @@ func GetCommands(logger utils.Log) []*clitool.Command {
 				if err != nil {
 					return
 				}
-				err = goModule.CalcDependencies()
+				formatValue, filteredArgs, err := extractStringFlag(context.Args().Slice(), formatFlag)
 				if err != nil {
 					return
 				}
-				return printBuild(bld, context.String(formatFlag))
+				goModule.SetArgs(filteredArgs)
+				err = goModule.Build()
+				if err != nil {
+					return
+				}
+				return printBuild(bld, formatValue)
 			},
 		},
 		{

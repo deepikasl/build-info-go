@@ -575,7 +575,7 @@ All you need to do is to navigate to the project's root directory and run one of
 #### Go
 
 ```shell
-bi go
+bi go <Go command> [command options]
 ```
 
 #### Maven
@@ -643,8 +643,10 @@ After you [created a Build](#creating-a-new-build), you can create a new build-i
 ```go
 // You can pass an empty string as an argument, if the root of the Go project is the working directory.
 goModule, err := bld.AddGoModule(goProjectPath)
-// Calculate the dependencies used by this module, and store them in the module struct.
-err = goModule.CalcDependencies()
+// You can also set a build command, if you want.
+goModule.SetArgs([]string{"build", "-o=app"})
+// Build the project (if arguments were provided), calculate the dependencies used by it and store them in the module struct.
+err = goModule.Build()
 
 // You can also add artifacts to that module.
 artifact1 := entities.Artifact{Name: "v1.0.0.mod", Type: "mod", Checksum: &entities.Checksum{Sha1: "123", Md5: "456", Sha256: "789"}}
@@ -675,8 +677,8 @@ err = gradleModule.CalcDependencies()
 npmModule, err := bld.AddNpmModule(npmProjectPath)
 // Checksum calculation is not supported for npm projects, so you can add a function that calculates them.
 npmModule.SetTraverseDependenciesFunc(func (dependency *entities.Dependency) (bool, error) {
-dependency.Checksum = &entities.Checksum{Sha1: "123"}
-return true, nil
+    dependency.Checksum = &entities.Checksum{Sha1: "123"}
+    return true, nil
 })
 // Calculate the dependencies used by this module, and store them in the module struct.
 err = npmModule.CalcDependencies()
@@ -693,8 +695,8 @@ err = npmModule.AddArtifacts(artifact1, artifact2, ...)
 yarnModule, err := bld.AddYarnModule(npmProjectPath)
 // Checksum calculation is not supported for Yarn projects, so you can add a function that calculates them.
 yarnModule.SetTraverseDependenciesFunc(func (dependency *entities.Dependency) (bool, error) {
-dependency.Checksum = &entities.Checksum{Sha1: "123"}
-return true, nil
+    dependency.Checksum = &entities.Checksum{Sha1: "123"}
+    return true, nil
 })
 // By default, your project will be built with the 'yarn install' command. If you want, you can set another command.
 yarnModule.SetArgs([]string{"install", "--json"})
