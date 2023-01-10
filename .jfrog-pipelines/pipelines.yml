@@ -2,10 +2,10 @@ resources:
   - name: buildinfoGoGit
     type: GitRepo
     configuration:
-      path: asafgabai/build-info-go
+      path: deepikasl/build-info-go
       branches:
         include: dev
-      gitProvider: git_asafgabai
+      gitProvider: deepikaGithub
 
 pipelines:
   - name: release_build_info_go
