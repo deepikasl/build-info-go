@@ -28,7 +28,7 @@ pipelines:
             - name: buildinfoGoGit
               trigger: false
           integrations:
-            - name: git_asafgabai
+            - name: deepikaGithub
             - name: ecosys_asafg
         execution:
           onExecute:
